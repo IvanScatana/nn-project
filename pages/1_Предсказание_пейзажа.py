@@ -3,10 +3,10 @@ import torch
 import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
-import pandas as pd
 import time
 import requests
 from io import BytesIO
+import numpy as np
 
 # ========== 1. КОНФИГУРАЦИЯ ==========
 MODEL_URL = "https://huggingface.co/Scatana/nn_streamlit/resolve/main/convnext_base.pth"
@@ -14,7 +14,28 @@ CLASS_NAMES = ['Здания', 'Лес', 'Ледники', 'Горы', 'Море
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-# ========== 2. ЗАГРУЗКА МОДЕЛИ ==========
+# ========== 2. ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ЦВЕТА ПО УВЕРЕННОСТИ ==========
+def get_confidence_color(confidence):
+    """
+    Возвращает цвет в формате RGB в зависимости от уверенности (0..1).
+    От красного (0) через жёлтый (0.5) к зелёному (1).
+    """
+    # Ограничиваем confidence в пределах [0,1]
+    c = max(0.0, min(1.0, confidence))
+    if c <= 0.5:
+        # Красный -> Жёлтый: R=255, G от 0 до 255, B=0
+        r = 255
+        g = int(255 * (c / 0.5))
+        b = 0
+    else:
+        # Жёлтый -> Зелёный: G=255, R от 255 до 0, B=0
+        r = int(255 * (1 - (c - 0.5) / 0.5))
+        g = 255
+        b = 0
+    return f"rgb({r}, {g}, {b})"
+
+
+# ========== 3. ЗАГРУЗКА МОДЕЛИ ==========
 @st.cache_resource
 def load_model():
     model = models.convnext_base(weights=None)
@@ -30,7 +51,7 @@ def load_model():
     return model
 
 
-# ========== 3. ПРЕДОБРАБОТКА ==========
+# ========== 4. ПРЕДОБРАБОТКА ==========
 def preprocess_image(image: Image.Image):
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -43,18 +64,20 @@ def preprocess_image(image: Image.Image):
     return transform(image).unsqueeze(0).to(DEVICE)
 
 
-# ========== 4. ПРЕДСКАЗАНИЕ С ЗАМЕРОМ ВРЕМЕНИ ==========
-def predict_single_with_time(image_tensor, model):
+# ========== 5. ПРЕДСКАЗАНИЕ (ТОП-2 + ВРЕМЯ) ==========
+def predict_top2_with_time(image_tensor, model):
     start_time = time.time()
     with torch.no_grad():
         outputs = model(image_tensor)
         probabilities = torch.nn.functional.softmax(outputs, dim=1)
-        predicted_idx = torch.argmax(probabilities, dim=1).item()
+        probs_np = probabilities.cpu().numpy()[0]
+        top2_indices = np.argsort(probs_np)[-2:][::-1]
+        top2_probs = probs_np[top2_indices]
     elapsed_time = time.time() - start_time
-    return predicted_idx, probabilities.cpu().numpy()[0], elapsed_time
+    return top2_indices, top2_probs, elapsed_time
 
 
-# ========== 5. ЗАГРУЗКА ИЗОБРАЖЕНИЯ ПО ССЫЛКЕ ==========
+# ========== 6. ЗАГРУЗКА ИЗОБРАЖЕНИЯ ПО ССЫЛКЕ ==========
 def load_image_from_url(url):
     try:
         response = requests.get(url, timeout=10)
@@ -66,11 +89,19 @@ def load_image_from_url(url):
         return None
 
 
-# ========== 6. ОСНОВНОЙ ИНТЕРФЕЙС ==========
+# ========== 7. ФОРМАТИРОВАНИЕ С ЦВЕТОМ ==========
+def format_prediction_with_gradient(class_name, confidence):
+    color = get_confidence_color(confidence)
+    confidence_pct = confidence * 100
+    return f'**<span style="color:{color};">{class_name} ({confidence_pct:.1f}%)</span>**'
+
+
+# ========== 8. ОСНОВНОЙ ИНТЕРФЕЙС ==========
 def main():
     st.set_page_config(page_title="Классификатор изображений", layout="wide")
     st.title("🏞️ Классификатор изображений")
     st.markdown("Модель определяет: здание, лес, ледник, гора, море или улица.")
+    st.markdown("🎨 **Цвет уверенности:** от 🔴 красного (0%) до 🟢 зелёного (100%).")
 
     # Загрузка модели
     with st.spinner("Загрузка модели..."):
@@ -103,15 +134,18 @@ def main():
             for i, file in enumerate(uploaded_files):
                 image = Image.open(file).convert('RGB')
                 tensor = preprocess_image(image)
-                pred_idx, probs, elapsed = predict_single_with_time(tensor, model)
-                predicted_class = CLASS_NAMES[pred_idx]
-                confidence = probs[pred_idx] * 100
+                top2_idx, top2_probs, elapsed = predict_top2_with_time(tensor, model)
+                
+                top1_class = CLASS_NAMES[top2_idx[0]]
+                top1_prob = top2_probs[0]
+                top2_class = CLASS_NAMES[top2_idx[1]]
+                top2_prob = top2_probs[1]
 
                 results.append({
                     "filename": file.name,
-                    "predicted_class": predicted_class,
-                    "confidence": f"{confidence:.2f}%",
-                    "time": f"{elapsed:.3f} сек",
+                    "top1": (top1_class, top1_prob),
+                    "top2": (top2_class, top2_prob),
+                    "time": elapsed,
                     "image": image
                 })
                 progress_bar.progress((i + 1) / len(uploaded_files))
@@ -121,34 +155,39 @@ def main():
             status_text.empty()
             st.success("Классификация завершена!")
 
-            # Галерея с результатами (без таблицы)
+            # Галерея с уменьшенными картинками и цветным top-1
             st.subheader("Галерея с предсказаниями")
             cols = st.columns(3)
             for idx, res in enumerate(results):
                 col = cols[idx % 3]
                 with col:
-                    st.image(res["image"], caption=res["filename"], use_container_width=True)
-                    st.markdown(f"**{res['predicted_class']}**  \nУверенность: {res['confidence']}  \n⏱️ {res['time']}")
+                    st.image(res["image"], caption=res["filename"], width=180)
+                    top1_html = format_prediction_with_gradient(res["top1"][0], res["top1"][1])
+                    st.markdown(f"{top1_html}<br>📌 {res['top2'][0]} ({res['top2'][1]*100:.1f}%)<br>⏱️ {res['time']:.3f} сек", unsafe_allow_html=True)
 
     # ----- ОБРАБОТКА ССЫЛКИ -----
     if image_url:
         if st.button("Классифицировать по ссылке"):
             image = load_image_from_url(image_url)
             if image is not None:
-                st.image(image, caption="Изображение по ссылке", use_container_width=True)
+                st.image(image, caption="Изображение по ссылке", width=300)
                 tensor = preprocess_image(image)
-                pred_idx, probs, elapsed = predict_single_with_time(tensor, model)
-                predicted_class = CLASS_NAMES[pred_idx]
-                confidence = probs[pred_idx] * 100
+                top2_idx, top2_probs, elapsed = predict_top2_with_time(tensor, model)
+                
+                top1_class = CLASS_NAMES[top2_idx[0]]
+                top1_prob = top2_probs[0]
+                top2_class = CLASS_NAMES[top2_idx[1]]
+                top2_prob = top2_probs[1]
 
-                st.markdown(f"### Результат:")
-                st.markdown(f"**Класс:** {predicted_class}")
-                st.markdown(f"**Уверенность:** {confidence:.2f}%")
-                st.markdown(f"**Время предсказания:** {elapsed:.3f} секунд")
+                st.markdown("### Результат:")
+                top1_html = format_prediction_with_gradient(top1_class, top1_prob)
+                st.markdown(top1_html, unsafe_allow_html=True)
+                st.markdown(f"📌 **{top2_class}** ({top2_prob*100:.1f}%)")
+                st.markdown(f"⏱️ Время предсказания: **{elapsed:.3f} секунд**")
             else:
                 st.error("Не удалось загрузить изображение по ссылке")
 
-    st.caption("Примечание: Уверенность показывает, насколько модель уверена в своём выборе.")
+    st.caption("🎨 Цвет top-1 меняется от красного (низкая уверенность) до зелёного (высокая).")
 
 
 if __name__ == "__main__":
