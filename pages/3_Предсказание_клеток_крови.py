@@ -5,39 +5,24 @@ from torchvision import models, transforms
 from PIL import Image
 import pandas as pd
 
-# ========== 1. КОНФИГУРАЦИЯ ==========
-# Прямая ссылка на файл модели в публичном репозитории Hugging Face
-# Замените на вашу ссылку (пример: Scatana/nn_streamlit)
 MODEL_URL = "https://huggingface.co/Scatana/nn_streamlit/resolve/main/weights_model_convnext_small_v2.pt"
 
-# Список классов в правильном порядке (индексы 0..5)
 CLASS_NAMES = ['EOSINOPHIL', 'LYMPHOCYTE', 'MONOCYTE', 'NEUTROPHIL']
 
-# Устройство для инференса (CPU или GPU)
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
-# ========== 2. ЗАГРУЗКА МОДЕЛИ (КЭШИРУЕТСЯ) ==========
 @st.cache_resource
 def load_model():
-    """
-    Загружает архитектуру модели и веса из Hugging Face.
-    Результат кэшируется, чтобы не скачивать модель при каждом взаимодействии.
-    """
-    # 1. Создаём архитектуру так же, как при обучении
     model = models.convnext_small(pretrained=False)
     model.classifier[2] = nn.Linear(in_features=768, out_features=4, bias=True)
     
-    # 2. Загружаем state_dict из URL
-    #    map_location временно ставим CPU, потом перенесём на нужное устройство
     state_dict = torch.hub.load_state_dict_from_url(
         MODEL_URL,
         map_location='cpu',
-        file_name='best_model.pth'
+        file_name='weights_model_convnext_small_v2.pt'
     )
     model.load_state_dict(state_dict)
     
-    # 3. Переводим модель в режим оценки и на целевое устройство
     model.eval()
     model.to(DEVICE)
     return model
@@ -45,10 +30,7 @@ def load_model():
 
 # ========== 3. ПРЕДОБРАБОТКА ИЗОБРАЖЕНИЯ ==========
 def preprocess_image(image: Image.Image):
-    """
-    Преобразует PIL Image в тензор, готовый для подачи в модель.
-    Используются те же трансформации, что и при валидации.
-    """
+
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -57,16 +39,11 @@ def preprocess_image(image: Image.Image):
             std=[0.229, 0.224, 0.225]
         )
     ])
-    # Добавляем размерность батча (1, 3, 224, 224)
     img_tensor = transform(image).unsqueeze(0)
     return img_tensor.to(DEVICE)
 
 
-# ========== 4. ФУНКЦИЯ ПРЕДСКАЗАНИЯ ДЛЯ ОДНОГО ИЗОБРАЖЕНИЯ ==========
 def predict_single(image_tensor, model):
-    """
-    Выполняет инференс модели и возвращает предсказанный индекс класса и вероятности.
-    """
     with torch.no_grad():
         outputs = model(image_tensor)
         probabilities = torch.nn.functional.softmax(outputs, dim=1)
@@ -76,10 +53,9 @@ def predict_single(image_tensor, model):
 
 # ========== 5. ОСНОВНОЙ ИНТЕРФЕЙС STREAMLIT ==========
 def main():
-    st.set_page_config(page_title="Классификатор изображений (множественная загрузка)", layout="wide")
-    st.title("🏞️ Классификатор изображений")
-    st.markdown("Загрузите **одно или несколько** фотографий, и модель определит, что на них изображено: "
-                "здание, лес, ледник, гора, море или улица.")
+    st.set_page_config(page_title="Классификатор клеток", layout="wide")
+    st.title("💉 Классификатор клеток 🩸")
+    st.markdown("Загрузите **одну или несколько** фотографий, и модель определит, что на них изображено: ")
 
     # Загружаем модель (один раз, кэшируется)
     with st.spinner("Загрузка модели... Пожалуйста, подождите."):
