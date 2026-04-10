@@ -1,5 +1,11 @@
+# Виртуальное окружение
 .venv/
 
+# Данные (изображения)
 Ivan/seg_pred/
 Ivan/seg_test/
 Ivan/seg_train/
+
+# Файлы обученных моделей
+*.pth
+best_model_*.pth
