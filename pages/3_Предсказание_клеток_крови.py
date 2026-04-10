@@ -7,7 +7,7 @@ import pandas as pd
 
 MODEL_URL = "https://huggingface.co/Scatana/nn_streamlit/resolve/main/weights_model_convnext_small_v2.pt"
 
-CLASS_NAMES = ['EOSINOPHIL', 'LYMPHOCYTE', 'MONOCYTE', 'NEUTROPHIL']
+CLASS_NAMES = ['Эозинофил', 'Лимфоцит', 'Моноцит', 'Нейтрофил']
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

@@ -4,8 +4,6 @@ import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
 import time
-import requests
-from io import BytesIO
 import numpy as np
 
 # ========== 1. КОНФИГУРАЦИЯ ==========
@@ -20,15 +18,12 @@ def get_confidence_color(confidence):
     Возвращает цвет в формате RGB в зависимости от уверенности (0..1).
     От красного (0) через жёлтый (0.5) к зелёному (1).
     """
-    # Ограничиваем confidence в пределах [0,1]
     c = max(0.0, min(1.0, confidence))
     if c <= 0.5:
-        # Красный -> Жёлтый: R=255, G от 0 до 255, B=0
         r = 255
         g = int(255 * (c / 0.5))
         b = 0
     else:
-        # Жёлтый -> Зелёный: G=255, R от 255 до 0, B=0
         r = int(255 * (1 - (c - 0.5) / 0.5))
         g = 255
         b = 0
@@ -77,26 +72,14 @@ def predict_top2_with_time(image_tensor, model):
     return top2_indices, top2_probs, elapsed_time
 
 
-# ========== 6. ЗАГРУЗКА ИЗОБРАЖЕНИЯ ПО ССЫЛКЕ ==========
-def load_image_from_url(url):
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        image = Image.open(BytesIO(response.content)).convert('RGB')
-        return image
-    except Exception as e:
-        st.error(f"Не удалось загрузить изображение по ссылке: {e}")
-        return None
-
-
-# ========== 7. ФОРМАТИРОВАНИЕ С ЦВЕТОМ ==========
+# ========== 6. ФОРМАТИРОВАНИЕ С ЦВЕТОМ ==========
 def format_prediction_with_gradient(class_name, confidence):
     color = get_confidence_color(confidence)
     confidence_pct = confidence * 100
     return f'**<span style="color:{color};">{class_name} ({confidence_pct:.1f}%)</span>**'
 
 
-# ========== 8. ОСНОВНОЙ ИНТЕРФЕЙС ==========
+# ========== 7. ОСНОВНОЙ ИНТЕРФЕЙС ==========
 def main():
     st.set_page_config(page_title="Классификатор изображений", layout="wide")
     st.title("🏞️ Классификатор изображений")
@@ -112,37 +95,33 @@ def main():
             st.error(f"Ошибка загрузки модели: {e}")
             st.stop()
 
-    # ----- РАЗДЕЛ: ЗАГРУЗКА ФАЙЛОВ -----
-    st.subheader("📁 Загрузите изображения с компьютера")
+    # Виджет загрузки нескольких изображений
     uploaded_files = st.file_uploader(
         "Выберите одно или несколько изображений (JPG, JPEG, PNG)",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True
     )
 
-    # ----- РАЗДЕЛ: ССЫЛКА НА ИЗОБРАЖЕНИЕ -----
-    st.subheader("🔗 Или вставьте ссылку на изображение")
-    image_url = st.text_input("Ссылка на изображение (URL)")
+    if uploaded_files and len(uploaded_files) > 0:
+        st.subheader(f"Загружено {len(uploaded_files)} изображений")
 
-    # ----- ОБРАБОТКА ЗАГРУЖЕННЫХ ФАЙЛОВ -----
-    if uploaded_files:
-        if st.button("Классифицировать загруженные файлы"):
+        if st.button("Классифицировать все"):
             results = []
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            for i, file in enumerate(uploaded_files):
-                image = Image.open(file).convert('RGB')
-                tensor = preprocess_image(image)
-                top2_idx, top2_probs, elapsed = predict_top2_with_time(tensor, model)
-                
+            for i, uploaded_file in enumerate(uploaded_files):
+                image = Image.open(uploaded_file).convert('RGB')
+                img_tensor = preprocess_image(image)
+                top2_idx, top2_probs, elapsed = predict_top2_with_time(img_tensor, model)
+
                 top1_class = CLASS_NAMES[top2_idx[0]]
                 top1_prob = top2_probs[0]
                 top2_class = CLASS_NAMES[top2_idx[1]]
                 top2_prob = top2_probs[1]
 
                 results.append({
-                    "filename": file.name,
+                    "filename": uploaded_file.name,
                     "top1": (top1_class, top1_prob),
                     "top2": (top2_class, top2_prob),
                     "time": elapsed,
@@ -155,7 +134,7 @@ def main():
             status_text.empty()
             st.success("Классификация завершена!")
 
-            # Галерея с уменьшенными картинками и цветным top-1
+            # Галерея с результатами
             st.subheader("Галерея с предсказаниями")
             cols = st.columns(3)
             for idx, res in enumerate(results):
@@ -165,29 +144,7 @@ def main():
                     top1_html = format_prediction_with_gradient(res["top1"][0], res["top1"][1])
                     st.markdown(f"{top1_html}<br>📌 {res['top2'][0]} ({res['top2'][1]*100:.1f}%)<br>⏱️ {res['time']:.3f} сек", unsafe_allow_html=True)
 
-    # ----- ОБРАБОТКА ССЫЛКИ -----
-    if image_url:
-        if st.button("Классифицировать по ссылке"):
-            image = load_image_from_url(image_url)
-            if image is not None:
-                st.image(image, caption="Изображение по ссылке", width=300)
-                tensor = preprocess_image(image)
-                top2_idx, top2_probs, elapsed = predict_top2_with_time(tensor, model)
-                
-                top1_class = CLASS_NAMES[top2_idx[0]]
-                top1_prob = top2_probs[0]
-                top2_class = CLASS_NAMES[top2_idx[1]]
-                top2_prob = top2_probs[1]
-
-                st.markdown("### Результат:")
-                top1_html = format_prediction_with_gradient(top1_class, top1_prob)
-                st.markdown(top1_html, unsafe_allow_html=True)
-                st.markdown(f"📌 **{top2_class}** ({top2_prob*100:.1f}%)")
-                st.markdown(f"⏱️ Время предсказания: **{elapsed:.3f} секунд**")
-            else:
-                st.error("Не удалось загрузить изображение по ссылке")
-
-    st.caption("🎨 Цвет top-1 меняется от красного (низкая уверенность) до зелёного (высокая).")
+            st.caption("🎨 Цвет top-1 меняется от красного (низкая уверенность) до зелёного (высокая).")
 
 
 if __name__ == "__main__":

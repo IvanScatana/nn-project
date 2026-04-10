@@ -14,35 +14,7 @@ warnings.filterwarnings("ignore")
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 # ====== КЛАССЫ ======
-IDX_TO_CLASS = {
-    0: 'air hockey', 1: 'ampute football', 2: 'archery', 3: 'arm wrestling',
-    4: 'axe throwing', 5: 'balance beam', 6: 'barell racing', 7: 'baseball',
-    8: 'basketball', 9: 'baton twirling', 10: 'bike polo', 11: 'billiards',
-    12: 'bmx', 13: 'bobsled', 14: 'bowling', 15: 'boxing', 16: 'bull riding',
-    17: 'bungee jumping', 18: 'canoe slamon', 19: 'cheerleading',
-    20: 'chuckwagon racing', 21: 'cricket', 22: 'croquet', 23: 'curling',
-    24: 'disc golf', 25: 'fencing', 26: 'field hockey', 27: 'figure skating men',
-    28: 'figure skating pairs', 29: 'figure skating women', 30: 'fly fishing',
-    31: 'football', 32: 'formula 1 racing', 33: 'frisbee', 34: 'gaga',
-    35: 'giant slalom', 36: 'golf', 37: 'hammer throw', 38: 'hang gliding',
-    39: 'harness racing', 40: 'high jump', 41: 'hockey', 42: 'horse jumping',
-    43: 'horse racing', 44: 'horseshoe pitching', 45: 'hurdles',
-    46: 'hydroplane racing', 47: 'ice climbing', 48: 'ice yachting',
-    49: 'jai alai', 50: 'javelin', 51: 'jousting', 52: 'judo', 53: 'lacrosse',
-    54: 'log rolling', 55: 'luge', 56: 'motorcycle racing', 57: 'mushing',
-    58: 'nascar racing', 59: 'olympic wrestling', 60: 'parallel bar',
-    61: 'pole climbing', 62: 'pole dancing', 63: 'pole vault', 64: 'polo',
-    65: 'pommel horse', 66: 'rings', 67: 'rock climbing', 68: 'roller derby',
-    69: 'rollerblade racing', 70: 'rowing', 71: 'rugby', 72: 'sailboat racing',
-    73: 'shot put', 74: 'shuffleboard', 75: 'sidecar racing', 76: 'ski jumping',
-    77: 'sky surfing', 78: 'skydiving', 79: 'snow boarding',
-    80: 'snowmobile racing', 81: 'speed skating', 82: 'steer wrestling',
-    83: 'sumo wrestling', 84: 'surfing', 85: 'swimming', 86: 'table tennis',
-    87: 'tennis', 88: 'track bicycle', 89: 'trapeze', 90: 'tug of war',
-    91: 'ultimate', 92: 'uneven bars', 93: 'volleyball', 94: 'water cycling',
-    95: 'water polo', 96: 'weightlifting', 97: 'wheelchair basketball',
-    98: 'wheelchair racing', 99: 'wingsuit flying'
-}
+IDX_TO_CLASS = {0:'Аэрохоккей',1:'Футбол ампутантов',2:'Стрельба из лука',3:'Армрестлинг',4:'Метание топора',5:'Бревно',6:'Гонки на бочках',7:'Бейсбол',8:'Баскетбол',9:'Твирлинг',10:'Велополо',11:'Бильярдный спорт',12:'BMX',13:'Бобслей',14:'Боулинг',15:'Бокс',16:'Родео',17:'Банджи-джампинг',18:'Гребной слалом',19:'Чир спорт',20:'Гонки на повозках',21:'Крикет',22:'Крокет',23:'Кёрлинг',24:'Диск-гольф',25:'Фехтование',26:'Хоккей на траве',27:'Фигурное катание (мужчины)',28:'Фигурное катание (пары)',29:'Фигурное катание (женщины)',30:'Нахлыст',31:'Американский футбол',32:'Формула-1',33:'Фрисби',34:'Гага',35:'Гигантский слалом',36:'Гольф',37:'Метание молота',38:'Дельтапланеризм',39:'Гарнессинг',40:'Прыжки в высоту',41:'Хоккей',42:'Конкур',43:'Скачки',44:'Метание подковы',45:'Бег с барьерами',46:'Гонки на гидропланах',47:'Ледолазание',48:'Буерный спорт',49:'Хай-алай',50:'Метание копья',51:'Рыцарский турнир',52:'Дзюдо',53:'Лакросс',54:'Лог-роллинг',55:'Санный спорт',56:'Мотогонки',57:'Гонки на собачьих упряжках',58:'NASCAR',59:'Вольная борьба',60:'Параллельные брусья',61:'Лазание по шесту',62:'Шестовая акробатика',63:'Прыжки с шестом',64:'Поло',65:'Конь',66:'Кольца',67:'Скалолазание',68:'Роллер-дерби',69:'Роллер-спидскейтинг',70:'Академическая гребля',71:'Регби',72:'Парусные гонки',73:'Толкание ядра',74:'Шаффлборд',75:'Гонки с коляской',76:'Прыжки с трамплина',77:'Сёрфинг в небе',78:'Парашютный спорт',79:'Сноубординг',80:'Гонки на снегоходах',81:'Конькобежный спорт',82:'Борьба с быком',83:'Сумо',84:'Сёрфинг',85:'Плавание',86:'Настольный теннис',87:'Теннис',88:'Велотрек',89:'Трапеция',90:'Перетягивание каната',91:'Алтимат',92:'Разновысокие брусья',93:'Волейбол',94:'Водный велосипед',95:'Водное поло',96:'Тяжёлая атлетика',97:'Баскетбол на колясках',98:'Гонки на колясках',99:'Полет в вингсьюте'}
 
 # ====== ТРАНСФОРМАЦИЯ (как при обучении) ======
 TRANSFORM = transforms.Compose([
