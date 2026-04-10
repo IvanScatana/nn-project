@@ -4,52 +4,34 @@ import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
 import pandas as pd
+import time
+import requests
+from io import BytesIO
 
 # ========== 1. КОНФИГУРАЦИЯ ==========
-# Прямая ссылка на файл модели в публичном репозитории Hugging Face
-# Замените на вашу ссылку (пример: Scatana/nn_streamlit)
-MODEL_URL = "https://huggingface.co/Scatana/nn_streamlit/resolve/main/best_model_0.9012_epoch1.pth"
-
-# Список классов в правильном порядке (индексы 0..5)
+MODEL_URL = "https://huggingface.co/Scatana/nn_streamlit/resolve/main/convnext_base.pth"
 CLASS_NAMES = ['Здания', 'Лес', 'Ледники', 'Горы', 'Море', 'Улица']
-
-# Устройство для инференса (CPU или GPU)
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-# ========== 2. ЗАГРУЗКА МОДЕЛИ (КЭШИРУЕТСЯ) ==========
+# ========== 2. ЗАГРУЗКА МОДЕЛИ ==========
 @st.cache_resource
 def load_model():
-    """
-    Загружает архитектуру модели и веса из Hugging Face.
-    Результат кэшируется, чтобы не скачивать модель при каждом взаимодействии.
-    """
-    # 1. Создаём архитектуру так же, как при обучении
     model = models.convnext_base(weights=None)
-    # Заменяем последний классификационный слой на 6 классов
     model.classifier[2] = nn.Linear(1024, 6)
-    
-    # 2. Загружаем state_dict из URL
-    #    map_location временно ставим CPU, потом перенесём на нужное устройство
     state_dict = torch.hub.load_state_dict_from_url(
         MODEL_URL,
         map_location='cpu',
         file_name='best_model.pth'
     )
     model.load_state_dict(state_dict)
-    
-    # 3. Переводим модель в режим оценки и на целевое устройство
     model.eval()
     model.to(DEVICE)
     return model
 
 
-# ========== 3. ПРЕДОБРАБОТКА ИЗОБРАЖЕНИЯ ==========
+# ========== 3. ПРЕДОБРАБОТКА ==========
 def preprocess_image(image: Image.Image):
-    """
-    Преобразует PIL Image в тензор, готовый для подачи в модель.
-    Используются те же трансформации, что и при валидации.
-    """
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -58,98 +40,115 @@ def preprocess_image(image: Image.Image):
             std=[0.229, 0.224, 0.225]
         )
     ])
-    # Добавляем размерность батча (1, 3, 224, 224)
-    img_tensor = transform(image).unsqueeze(0)
-    return img_tensor.to(DEVICE)
+    return transform(image).unsqueeze(0).to(DEVICE)
 
 
-# ========== 4. ФУНКЦИЯ ПРЕДСКАЗАНИЯ ДЛЯ ОДНОГО ИЗОБРАЖЕНИЯ ==========
-def predict_single(image_tensor, model):
-    """
-    Выполняет инференс модели и возвращает предсказанный индекс класса и вероятности.
-    """
+# ========== 4. ПРЕДСКАЗАНИЕ С ЗАМЕРОМ ВРЕМЕНИ ==========
+def predict_single_with_time(image_tensor, model):
+    start_time = time.time()
     with torch.no_grad():
         outputs = model(image_tensor)
         probabilities = torch.nn.functional.softmax(outputs, dim=1)
         predicted_idx = torch.argmax(probabilities, dim=1).item()
-    return predicted_idx, probabilities.cpu().numpy()[0]
+    elapsed_time = time.time() - start_time
+    return predicted_idx, probabilities.cpu().numpy()[0], elapsed_time
 
 
-# ========== 5. ОСНОВНОЙ ИНТЕРФЕЙС STREAMLIT ==========
+# ========== 5. ЗАГРУЗКА ИЗОБРАЖЕНИЯ ПО ССЫЛКЕ ==========
+def load_image_from_url(url):
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        image = Image.open(BytesIO(response.content)).convert('RGB')
+        return image
+    except Exception as e:
+        st.error(f"Не удалось загрузить изображение по ссылке: {e}")
+        return None
+
+
+# ========== 6. ОСНОВНОЙ ИНТЕРФЕЙС ==========
 def main():
-    st.set_page_config(page_title="Классификатор изображений (множественная загрузка)", layout="wide")
+    st.set_page_config(page_title="Классификатор изображений", layout="wide")
     st.title("🏞️ Классификатор изображений")
-    st.markdown("Загрузите **одно или несколько** фотографий, и модель определит, что на них изображено: "
-                "здание, лес, ледник, гора, море или улица.")
+    st.markdown("Модель определяет: здание, лес, ледник, гора, море или улица.")
 
-    # Загружаем модель (один раз, кэшируется)
-    with st.spinner("Загрузка модели... Пожалуйста, подождите."):
+    # Загрузка модели
+    with st.spinner("Загрузка модели..."):
         try:
             model = load_model()
-            st.success("Модель успешно загружена!")
+            st.success("Модель загружена")
         except Exception as e:
             st.error(f"Ошибка загрузки модели: {e}")
             st.stop()
 
-    # Виджет загрузки нескольких изображений
+    # ----- РАЗДЕЛ: ЗАГРУЗКА ФАЙЛОВ -----
+    st.subheader("📁 Загрузите изображения с компьютера")
     uploaded_files = st.file_uploader(
         "Выберите одно или несколько изображений (JPG, JPEG, PNG)",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True
     )
 
-    if uploaded_files and len(uploaded_files) > 0:
-        st.subheader(f"Загружено {len(uploaded_files)} изображений")
+    # ----- РАЗДЕЛ: ССЫЛКА НА ИЗОБРАЖЕНИЕ -----
+    st.subheader("🔗 Или вставьте ссылку на изображение")
+    image_url = st.text_input("Ссылка на изображение (URL)")
 
-        # Кнопка для запуска классификации всех изображений
-        if st.button("Классифицировать все"):
+    # ----- ОБРАБОТКА ЗАГРУЖЕННЫХ ФАЙЛОВ -----
+    if uploaded_files:
+        if st.button("Классифицировать загруженные файлы"):
             results = []
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            for i, uploaded_file in enumerate(uploaded_files):
-                # Открываем изображение
-                image = Image.open(uploaded_file).convert('RGB')
-                
-                # Предобработка и предсказание
-                img_tensor = preprocess_image(image)
-                pred_idx, probs = predict_single(img_tensor, model)
+            for i, file in enumerate(uploaded_files):
+                image = Image.open(file).convert('RGB')
+                tensor = preprocess_image(image)
+                pred_idx, probs, elapsed = predict_single_with_time(tensor, model)
                 predicted_class = CLASS_NAMES[pred_idx]
                 confidence = probs[pred_idx] * 100
-                
-                # Сохраняем результат
+
                 results.append({
-                    "filename": uploaded_file.name,
+                    "filename": file.name,
                     "predicted_class": predicted_class,
                     "confidence": f"{confidence:.2f}%",
+                    "time": f"{elapsed:.3f} сек",
                     "image": image
                 })
-                
-                # Обновляем прогресс
                 progress_bar.progress((i + 1) / len(uploaded_files))
                 status_text.text(f"Обработано {i+1} из {len(uploaded_files)}")
-            
+
             progress_bar.empty()
             status_text.empty()
             st.success("Классификация завершена!")
 
-            # Отображение результатов в виде таблицы и галереи
-            st.subheader("Результаты классификации")
-            
-            # Таблица с результатами (без изображений)
-            df = pd.DataFrame(results)
-            df_display = df.drop(columns=['image'])
-            st.dataframe(df_display, use_container_width=True)
-            
-            # Галерея: покажем каждое изображение с подписью
+            # Галерея с результатами (без таблицы)
             st.subheader("Галерея с предсказаниями")
-            cols = st.columns(3)  # 3 колонки для отображения
+            cols = st.columns(3)
             for idx, res in enumerate(results):
                 col = cols[idx % 3]
                 with col:
-                    st.image(res["image"], caption=f"{res['filename']}", use_container_width=True)
-                    st.markdown(f"**{res['predicted_class']}**  \n  Уверенность: {res['confidence']}")
-            st.caption("Примечание: Уверенность показывает, насколько модель уверена в своём выборе.")
+                    st.image(res["image"], caption=res["filename"], use_container_width=True)
+                    st.markdown(f"**{res['predicted_class']}**  \nУверенность: {res['confidence']}  \n⏱️ {res['time']}")
+
+    # ----- ОБРАБОТКА ССЫЛКИ -----
+    if image_url:
+        if st.button("Классифицировать по ссылке"):
+            image = load_image_from_url(image_url)
+            if image is not None:
+                st.image(image, caption="Изображение по ссылке", use_container_width=True)
+                tensor = preprocess_image(image)
+                pred_idx, probs, elapsed = predict_single_with_time(tensor, model)
+                predicted_class = CLASS_NAMES[pred_idx]
+                confidence = probs[pred_idx] * 100
+
+                st.markdown(f"### Результат:")
+                st.markdown(f"**Класс:** {predicted_class}")
+                st.markdown(f"**Уверенность:** {confidence:.2f}%")
+                st.markdown(f"**Время предсказания:** {elapsed:.3f} секунд")
+            else:
+                st.error("Не удалось загрузить изображение по ссылке")
+
+    st.caption("Примечание: Уверенность показывает, насколько модель уверена в своём выборе.")
 
 
 if __name__ == "__main__":
