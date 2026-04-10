@@ -1,0 +1,5 @@
+.venv/
+
+Ivan/seg_pred/
+Ivan/seg_test/
+Ivan/seg_train/
