@@ -4,52 +4,90 @@ import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
 import pandas as pd
+import os
 
 # ========== 1. КОНФИГУРАЦИЯ ==========
-# Прямая ссылка на файл модели в публичном репозитории Hugging Face
-# Замените на вашу ссылку (пример: Scatana/nn_streamlit)
+# Модель ConvNeXt (Hugging Face)
 MODEL_URL = "https://huggingface.co/Scatana/nn_streamlit/resolve/main/best_model_0.9012_epoch1.pth"
 
-# Список классов в правильном порядке (индексы 0..5)
-CLASS_NAMES = ['Здания', 'Лес', 'Ледники', 'Горы', 'Море', 'Улица']
+# Классы для ConvNeXt (6 классов)
+CLASS_NAMES_CONVNEXT = ['Здания', 'Лес', 'Ледники', 'Горы', 'Море', 'Улица']
 
-# Устройство для инференса (CPU или GPU)
+# Классы для вашей ResNet101 (100 видов спорта)
+CLASS_NAMES_RESNET101 = [
+    'air hockey', 'ampute football', 'archery', 'arm wrestling', 'axe throwing',
+    'balance beam', 'barell racing', 'baseball', 'basketball', 'baton twirling',
+    'bike polo', 'billiards', 'bmx', 'bobsled', 'bowling', 'boxing', 'bull riding',
+    'bungee jumping', 'canoe slamon', 'cheerleading', 'chuckwagon racing', 'cricket',
+    'croquet', 'curling', 'disc golf', 'fencing', 'field hockey', 'figure skating men',
+    'figure skating pairs', 'figure skating women', 'fly fishing', 'football',
+    'formula 1 racing', 'frisbee', 'gaga', 'giant slalom', 'golf', 'hammer throw',
+    'hang gliding', 'harness racing', 'high jump', 'hockey', 'horse jumping',
+    'horse racing', 'horseshoe pitching', 'hurdles', 'hydroplane racing', 'ice climbing',
+    'ice yachting', 'jai alai', 'javelin', 'jousting', 'judo', 'lacrosse', 'log rolling',
+    'luge', 'motorcycle racing', 'mushing', 'nascar racing', 'olympic wrestling',
+    'parallel bar', 'pole climbing', 'pole dancing', 'pole vault', 'polo', 'pommel horse',
+    'rings', 'rock climbing', 'roller derby', 'rollerblade racing', 'rowing', 'rugby',
+    'sailboat racing', 'shot put', 'shuffleboard', 'sidecar racing', 'ski jumping',
+    'sky surfing', 'skydiving', 'snow boarding', 'snowmobile racing', 'speed skating',
+    'steer wrestling', 'sumo wrestling', 'surfing', 'swimming', 'table tennis', 'tennis',
+    'track bicycle', 'trapeze', 'tug of war', 'ultimate', 'uneven bars', 'volleyball',
+    'water cycling', 'water polo', 'weightlifting', 'wheelchair basketball',
+    'wheelchair racing', 'wingsuit flying'
+]
+
+# Количество классов для ResNet101 (должно быть 100)
+NUM_CLASSES_RESNET101 = len(CLASS_NAMES_RESNET101)
+
+# Устройство
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# Путь к локальной модели ResNet101
+RESNET101_PATH = "resnet101_model.pth"
 
-# ========== 2. ЗАГРУЗКА МОДЕЛИ (КЭШИРУЕТСЯ) ==========
+
+# ========== 2. ЗАГРУЗКА CONVNEXT (Hugging Face) ==========
 @st.cache_resource
-def load_model():
-    """
-    Загружает архитектуру модели и веса из Hugging Face.
-    Результат кэшируется, чтобы не скачивать модель при каждом взаимодействии.
-    """
-    # 1. Создаём архитектуру так же, как при обучении
+def load_convnext_model():
+    """Загружает ConvNeXt с весами из Hugging Face."""
     model = models.convnext_base(weights=None)
-    # Заменяем последний классификационный слой на 6 классов
-    model.classifier[2] = nn.Linear(1024, 6)
-    
-    # 2. Загружаем state_dict из URL
-    #    map_location временно ставим CPU, потом перенесём на нужное устройство
+    model.classifier[2] = nn.Linear(1024, len(CLASS_NAMES_CONVNEXT))
     state_dict = torch.hub.load_state_dict_from_url(
         MODEL_URL,
         map_location='cpu',
         file_name='best_model.pth'
     )
     model.load_state_dict(state_dict)
-    
-    # 3. Переводим модель в режим оценки и на целевое устройство
     model.eval()
     model.to(DEVICE)
     return model
 
 
-# ========== 3. ПРЕДОБРАБОТКА ИЗОБРАЖЕНИЯ ==========
+# ========== 3. ЗАГРУЗКА RESNET101 (локальный файл) ==========
+@st.cache_resource
+def load_resnet101_model():
+    """Загружает ResNet101 с весами из локального файла."""
+    if not os.path.exists(RESNET101_PATH):
+        st.error(f"Файл модели не найден: {RESNET101_PATH}")
+        st.stop()
+
+    # Создаём архитектуру ResNet101
+    model = models.resnet101(pretrained=False)
+    # Заменяем последний полносвязный слой на 100 классов
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, NUM_CLASSES_RESNET101)
+
+    # Загружаем веса
+    state_dict = torch.load(RESNET101_PATH, map_location='cpu')
+    model.load_state_dict(state_dict)
+    model.eval()
+    model.to(DEVICE)
+    return model
+
+
+# ========== 4. ПРЕДОБРАБОТКА ИЗОБРАЖЕНИЯ (общая для обеих моделей) ==========
 def preprocess_image(image: Image.Image):
-    """
-    Преобразует PIL Image в тензор, готовый для подачи в модель.
-    Используются те же трансформации, что и при валидации.
-    """
+    """Преобразует PIL Image в тензор (224x224, нормализация ImageNet)."""
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -58,16 +96,13 @@ def preprocess_image(image: Image.Image):
             std=[0.229, 0.224, 0.225]
         )
     ])
-    # Добавляем размерность батча (1, 3, 224, 224)
-    img_tensor = transform(image).unsqueeze(0)
+    img_tensor = transform(image).unsqueeze(0)   # добавляем batch dimension
     return img_tensor.to(DEVICE)
 
 
-# ========== 4. ФУНКЦИЯ ПРЕДСКАЗАНИЯ ДЛЯ ОДНОГО ИЗОБРАЖЕНИЯ ==========
+# ========== 5. ФУНКЦИЯ ПРЕДСКАЗАНИЯ ==========
 def predict_single(image_tensor, model):
-    """
-    Выполняет инференс модели и возвращает предсказанный индекс класса и вероятности.
-    """
+    """Возвращает предсказанный индекс и вероятности всех классов."""
     with torch.no_grad():
         outputs = model(image_tensor)
         probabilities = torch.nn.functional.softmax(outputs, dim=1)
@@ -75,81 +110,135 @@ def predict_single(image_tensor, model):
     return predicted_idx, probabilities.cpu().numpy()[0]
 
 
-# ========== 5. ОСНОВНОЙ ИНТЕРФЕЙС STREAMLIT ==========
+# ========== 6. ОСНОВНОЙ ИНТЕРФЕЙС СТРИМЛИТ ==========
 def main():
-    st.set_page_config(page_title="Классификатор изображений (множественная загрузка)", layout="wide")
-    st.title("🏞️ Классификатор изображений")
-    st.markdown("Загрузите **одно или несколько** фотографий, и модель определит, что на них изображено: "
-                "здание, лес, ледник, гора, море или улица.")
+    st.set_page_config(page_title="Классификатор спорта и сцен", layout="wide")
+    st.title("🏅 Классификатор изображений")
+    st.markdown("""
+    **Две модели:**
+    - **ConvNeXt** – определяет тип ландшафта/сцены (6 классов: здания, лес, ледники, горы, море, улица)
+    - **ResNet101** – определяет вид спорта (100 классов, датасет Sports-100)
+    """)
 
-    # Загружаем модель (один раз, кэшируется)
-    with st.spinner("Загрузка модели... Пожалуйста, подождите."):
-        try:
-            model = load_model()
-            st.success("Модель успешно загружена!")
-        except Exception as e:
-            st.error(f"Ошибка загрузки модели: {e}")
-            st.stop()
+    # Загружаем модели (кэшируются, загрузка один раз)
+    with st.spinner("Загрузка модели ConvNeXt..."):
+        convnext_model = load_convnext_model()
+        st.success("✅ ConvNeXt загружена")
 
-    # Виджет загрузки нескольких изображений
-    uploaded_files = st.file_uploader(
-        "Выберите одно или несколько изображений (JPG, JPEG, PNG)",
-        type=["jpg", "jpeg", "png"],
-        accept_multiple_files=True
-    )
+    with st.spinner("Загрузка модели ResNet101..."):
+        resnet101_model = load_resnet101_model()
+        st.success("✅ ResNet101 загружена")
 
-    if uploaded_files and len(uploaded_files) > 0:
-        st.subheader(f"Загружено {len(uploaded_files)} изображений")
+    # Создаём две вкладки
+    tab1, tab2 = st.tabs(["📷 ConvNeXt (сцены)", "🏃 ResNet101 (спорт)"])
 
-        # Кнопка для запуска классификации всех изображений
-        if st.button("Классифицировать все"):
-            results = []
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+    # ---------- ВКЛАДКА 1: ConvNeXt ----------
+    with tab1:
+        st.header("Классификация сцен (ConvNeXt)")
+        st.markdown("Модель определяет: здание, лес, ледник, гора, море, улица.")
 
-            for i, uploaded_file in enumerate(uploaded_files):
-                # Открываем изображение
-                image = Image.open(uploaded_file).convert('RGB')
-                
-                # Предобработка и предсказание
-                img_tensor = preprocess_image(image)
-                pred_idx, probs = predict_single(img_tensor, model)
-                predicted_class = CLASS_NAMES[pred_idx]
-                confidence = probs[pred_idx] * 100
-                
-                # Сохраняем результат
-                results.append({
-                    "filename": uploaded_file.name,
-                    "predicted_class": predicted_class,
-                    "confidence": f"{confidence:.2f}%",
-                    "image": image
-                })
-                
-                # Обновляем прогресс
-                progress_bar.progress((i + 1) / len(uploaded_files))
-                status_text.text(f"Обработано {i+1} из {len(uploaded_files)}")
-            
-            progress_bar.empty()
-            status_text.empty()
-            st.success("Классификация завершена!")
+        uploaded_files_tab1 = st.file_uploader(
+            "Выберите одно или несколько изображений",
+            type=["jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            key="tab1_uploader"
+        )
 
-            # Отображение результатов в виде таблицы и галереи
-            st.subheader("Результаты классификации")
-            
-            # Таблица с результатами (без изображений)
-            df = pd.DataFrame(results)
-            df_display = df.drop(columns=['image'])
-            st.dataframe(df_display, use_container_width=True)
-            
-            # Галерея: покажем каждое изображение с подписью
-            st.subheader("Галерея с предсказаниями")
-            cols = st.columns(3)  # 3 колонки для отображения
-            for idx, res in enumerate(results):
-                col = cols[idx % 3]
-                with col:
-                    st.image(res["image"], caption=f"{res['filename']}", use_container_width=True)
-                    st.markdown(f"**{res['predicted_class']}**  \n  Уверенность: {res['confidence']}")
-            st.caption("Примечание: Уверенность показывает, насколько модель уверена в своём выборе.")
+        if uploaded_files_tab1:
+            st.subheader(f"Загружено {len(uploaded_files_tab1)} изображений")
+            if st.button("Классифицировать (ConvNeXt)", key="tab1_predict"):
+                results = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                for i, file in enumerate(uploaded_files_tab1):
+                    image = Image.open(file).convert('RGB')
+                    tensor = preprocess_image(image)
+                    pred_idx, probs = predict_single(tensor, convnext_model)
+                    predicted_class = CLASS_NAMES_CONVNEXT[pred_idx]
+                    confidence = probs[pred_idx] * 100
+
+                    results.append({
+                        "Файл": file.name,
+                        "Класс": predicted_class,
+                        "Уверенность": f"{confidence:.2f}%",
+                        "Изображение": image
+                    })
+
+                    progress_bar.progress((i + 1) / len(uploaded_files_tab1))
+                    status_text.text(f"Обработано {i+1} из {len(uploaded_files_tab1)}")
+
+                progress_bar.empty()
+                status_text.empty()
+                st.success("Классификация завершена!")
+
+                # Таблица результатов
+                df = pd.DataFrame(results)
+                st.dataframe(df.drop(columns=["Изображение"]), use_container_width=True)
+
+                # Галерея
+                st.subheader("Галерея с предсказаниями")
+                cols = st.columns(3)
+                for idx, res in enumerate(results):
+                    col = cols[idx % 3]
+                    with col:
+                        st.image(res["Изображение"], caption=res["Файл"], use_container_width=True)
+                        st.markdown(f"**{res['Класс']}**  \nУверенность: {res['Уверенность']}")
+                st.caption("Уверенность показывает, насколько модель уверена в своём выборе.")
+
+    # ---------- ВКЛАДКА 2: ResNet101 ----------
+    with tab2:
+        st.header("Классификация видов спорта (ResNet101)")
+        st.markdown(f"Модель обучена на **{NUM_CLASSES_RESNET101}** спортивных активностях (например, футбол, баскетбол, теннис и т.д.).")
+
+        uploaded_files_tab2 = st.file_uploader(
+            "Выберите одно или несколько изображений",
+            type=["jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            key="tab2_uploader"
+        )
+
+        if uploaded_files_tab2:
+            st.subheader(f"Загружено {len(uploaded_files_tab2)} изображений")
+            if st.button("Классифицировать (ResNet101)", key="tab2_predict"):
+                results = []
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                for i, file in enumerate(uploaded_files_tab2):
+                    image = Image.open(file).convert('RGB')
+                    tensor = preprocess_image(image)
+                    pred_idx, probs = predict_single(tensor, resnet101_model)
+                    predicted_class = CLASS_NAMES_RESNET101[pred_idx]
+                    confidence = probs[pred_idx] * 100
+
+                    results.append({
+                        "Файл": file.name,
+                        "Вид спорта": predicted_class,
+                        "Уверенность": f"{confidence:.2f}%",
+                        "Изображение": image
+                    })
+
+                    progress_bar.progress((i + 1) / len(uploaded_files_tab2))
+                    status_text.text(f"Обработано {i+1} из {len(uploaded_files_tab2)}")
+
+                progress_bar.empty()
+                status_text.empty()
+                st.success("Классификация завершена!")
+
+                # Таблица результатов
+                df = pd.DataFrame(results)
+                st.dataframe(df.drop(columns=["Изображение"]), use_container_width=True)
+
+                # Галерея
+                st.subheader("Галерея с предсказаниями")
+                cols = st.columns(3)
+                for idx, res in enumerate(results):
+                    col = cols[idx % 3]
+                    with col:
+                        st.image(res["Изображение"], caption=res["Файл"], use_container_width=True)
+                        st.markdown(f"**{res['Вид спорта']}**  \nУверенность: {res['Уверенность']}")
+                st.caption("Уверенность показывает, насколько модель уверена в своём выборе.")
 
 
 if __name__ == "__main__":

@@ -9,3 +9,5 @@ Ivan/seg_train/
 # Файлы обученных моделей
 *.pth
 best_model_*.pth
+
+test.py
